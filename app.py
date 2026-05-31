@@ -6,21 +6,33 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 class Fail2BanHandler(SimpleHTTPRequestHandler):
     def get_fail2ban_stats(self):
-        # Acede ao caminho do log que foi passado dinamicamente para o servidor
         log_path = self.server.log_path
         banned_ips = set()
+        unbanned_ips = set()
         recent_failures = []
 
         if os.path.exists(log_path):
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
-                    # 1. Capturar os BANIMENTOS
-                    if 'Ban' in line:
-                        match = re.search(r'Ban\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                    # 1. Capturar os UNBANS
+                    if 'Unban' in line:
+                        match = re.search(r'Unban\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
                         if match:
-                            banned_ips.add(match.group(1))
+                            ip = match.group(1)
+                            unbanned_ips.add(ip)
+                            if ip in banned_ips:
+                                banned_ips.remove(ip)
 
-                    # 2. Capturar as FALHAS
+                    # 2. Capturar os BANS ATIVOS
+                    elif 'Ban' in line:
+                        match = re.search(r'\bBan\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                        if match:
+                            ip = match.group(1)
+                            banned_ips.add(ip)
+                            if ip in unbanned_ips:
+                                unbanned_ips.remove(ip)
+
+                    # 3. Capturar as FALHAS
                     elif 'Found' in line:
                         match_time = re.match(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
                         match_jail = re.search(r'\[(.*?)\]\s+Found', line)
@@ -42,8 +54,18 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                                 "detail": detail_str
                             })
 
+        lista_banidos = sorted(list(banned_ips))
+        lista_liberados = sorted(list(unbanned_ips))
+
+        # Mantém seu log de console que funcionou perfeitamente!
+        print("\n================ [DEBUG MEMÓRIA FAIL2BAN] ================")
+        print(f"-> IPs ATIVAMENTE BANIDOS ({len(lista_banidos)}): {lista_banidos}")
+        print(f"-> HISTÓRICO DE LIBERADOS ({len(lista_liberados)}): {lista_liberados}")
+        print("==========================================================\n")
+
         return {
-            "banned": sorted(list(banned_ips)),
+            "banned": lista_banidos,
+            "unbanned": lista_liberados,
             "failures": recent_failures[:100]
         }
 
@@ -106,10 +128,15 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                         <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-800 shadow-xl">
                             <p class="text-sm font-medium text-slate-400 uppercase tracking-wider">IPs Banidos Atualmente</p>
                             <p id="total-count" class="text-4xl font-extrabold text-red-400 mt-2">0</p>
+                        </div>
+
+                        <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-800 shadow-xl">
+                            <p class="text-sm font-medium text-slate-400 uppercase tracking-wider">IPs Liberados Únicos</p>
+                            <p id="unbanned-count" class="text-4xl font-extrabold text-emerald-400 mt-2">0</p>
                         </div>
 
                         <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-800 shadow-xl">
@@ -123,21 +150,27 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             <button id="tab-banned" onclick="switchTab('banned')" class="border-b-2 border-red-500 text-red-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none">
                                 <span>❌</span> IPs Banidos
                             </button>
+                            <button id="tab-unbanned" onclick="switchTab('unbanned')" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none">
+                                <span>✅</span> IPs Liberados
+                            </button>
                             <button id="tab-failures" onclick="switchTab('failures')" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none">
                                 <span>⚠️</span> Histórico de Falhas Detalhado
                             </button>
                         </nav>
                     </div>
 
-                    <div class="bg-slate-950 rounded-xl border border-slate-800 shadow-2xl h-[480px] overflow-y-auto">
+                    <div class="bg-slate-950 rounded-xl border border-slate-800 shadow-2xl flex flex-col max-h-[700px]">
 
-                        <div id="panel-banned" class="block">
+                        <div id="panel-banned" class="block flex flex-col flex-1 overflow-hidden">
                             <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
-                                <input type="text" id="search-ip" placeholder="🔍 Pesquisar IP..." class="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all text-sm" />
+                                <div class="flex gap-3 items-center mb-3">
+                                    <input type="text" id="search-ip" placeholder="🔍 Pesquisar IP Banido..." class="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all text-sm" />
+                                    <span class="text-xs text-slate-400">Exibindo: <span id="banned-display-count" class="font-bold text-red-400">0</span>/<span id="banned-total-count" class="font-bold">0</span></span>
+                                </div>
                             </div>
-                            <div class="overflow-x-auto">
+                            <div class="overflow-x-auto overflow-y-auto flex-1">
                                 <table class="w-full text-left border-collapse">
-                                    <thead class="sticky top-[56px] bg-slate-950 shadow-md">
+                                    <thead class="sticky top-0 bg-slate-950 shadow-md">
                                         <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
                                             <th class="py-3.5 px-6 font-semibold">Endereço IP</th>
                                             <th class="py-3.5 px-6 font-semibold">Status</th>
@@ -148,8 +181,31 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             </div>
                         </div>
 
-                        <div id="panel-failures" class="hidden">
-                            <div class="overflow-x-auto">
+                        <div id="panel-unbanned" class="hidden flex flex-col flex-1 overflow-hidden">
+                            <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
+                                <div class="flex gap-3 items-center mb-3">
+                                    <input type="text" id="search-unbanned-ip" placeholder="🔍 Pesquisar IP Liberado..." class="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all text-sm" />
+                                    <span class="text-xs text-slate-400">Exibindo: <span id="unbanned-display-count" class="font-bold text-emerald-400">0</span>/<span id="unbanned-total-count" class="font-bold">0</span></span>
+                                </div>
+                            </div>
+                            <div class="overflow-x-auto overflow-y-auto flex-1">
+                                <table class="w-full text-left border-collapse">
+                                    <thead class="sticky top-0 bg-slate-950 shadow-md">
+                                        <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
+                                            <th class="py-3.5 px-6 font-semibold">Endereço IP</th>
+                                            <th class="py-3.5 px-6 font-semibold">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="unbanned-table-body" class="divide-y divide-slate-800/60 text-sm"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div id="panel-failures" class="hidden flex flex-col flex-1 overflow-hidden">
+                            <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
+                                <span class="text-xs text-slate-400">Exibindo: <span id="failure-display-count" class="font-bold text-amber-400">0</span>/<span id="failure-total-count" class="font-bold">0</span> últimas falhas</span>
+                            </div>
+                            <div class="overflow-x-auto overflow-y-auto flex-1">
                                 <table class="w-full text-left border-collapse">
                                     <thead class="sticky top-0 bg-slate-950 shadow-md">
                                         <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
@@ -171,65 +227,119 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                     let timeLeft = 5;
                     let countdownInterval;
                     let allBannedIps = [];
+                    let allUnbannedIps = [];
 
                     function filterIPs() {
                         const searchInput = document.getElementById('search-ip');
                         const searchValue = searchInput.value.toLowerCase().trim();
                         const tbodyBanned = document.getElementById('ip-table-body');
 
-                        if (searchValue === '') {
-                            // Reconstrói a tabela com todos os IPs quando o campo está vazio
-                            if (allBannedIps.length === 0) {
-                                tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP banido encontrado.</td></tr>`;
-                            } else {
-                                tbodyBanned.innerHTML = allBannedIps.map(ip => `
-                                    <tr class="hover:bg-slate-900/40 transition-colors">
-                                        <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
-                                        <td class="py-3.5 px-6">
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">BANNED</span>
-                                        </td>
-                                    </tr>
-                                `).join('');
-                            }
-                            return;
-                        }
-
                         const rows = tbodyBanned.querySelectorAll('tr');
-                        let visibleCount = 0;
                         rows.forEach(row => {
                             const ipCell = row.querySelector('td');
                             if (ipCell) {
                                 const ip = ipCell.textContent.trim();
-                                if (ip.includes(searchValue)) {
-                                    row.style.display = '';
-                                    visibleCount++;
-                                } else {
-                                    row.style.display = 'none';
-                                }
+                                row.style.display = ip.includes(searchValue) ? '' : 'none';
                             }
                         });
+                    }
 
-                        if (visibleCount === 0 && allBannedIps.length > 0) {
-                            tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP encontrado para "${searchValue}"</td></tr>`;
+                    function filterUnbannedIPs() {
+                        const searchInput = document.getElementById('search-unbanned-ip');
+                        const searchValue = searchInput.value.toLowerCase().trim();
+                        const tbodyUnbanned = document.getElementById('unbanned-table-body');
+
+                        const rows = tbodyUnbanned.querySelectorAll('tr');
+                        rows.forEach(row => {
+                            const ipCell = row.querySelector('td');
+                            if (ipCell) {
+                                const ip = ipCell.textContent.trim();
+                                row.style.display = ip.includes(searchValue) ? '' : 'none';
+                            }
+                        });
+                    }
+
+                    // Forçando reconstrução limpa via iteração robusta
+                    function buildBannedTable() {
+                        const tbodyBanned = document.getElementById('ip-table-body');
+                        tbodyBanned.innerHTML = '';
+                        
+                        const totalCount = allBannedIps.length;
+                        document.getElementById('banned-total-count').innerText = totalCount;
+                        
+                        if (totalCount === 0) {
+                            document.getElementById('banned-display-count').innerText = '0';
+                            tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP banido encontrado.</td></tr>`;
+                            return;
                         }
+
+                        allBannedIps.forEach(ip => {
+                            const tr = document.createElement('tr');
+                            tr.className = "hover:bg-slate-900/40 transition-colors";
+                            tr.innerHTML = `
+                                <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
+                                <td class="py-3.5 px-6">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">BANNED</span>
+                                </td>
+                            `;
+                            tbodyBanned.appendChild(tr);
+                        });
+                        
+                        document.getElementById('banned-display-count').innerText = totalCount;
+                    }
+
+                    // Forçando reconstrução limpa para evitar pular itens do Array
+                    function buildUnbannedTable() {
+                        const tbodyUnbanned = document.getElementById('unbanned-table-body');
+                        tbodyUnbanned.innerHTML = '';
+                        
+                        const totalCount = allUnbannedIps.length;
+                        document.getElementById('unbanned-total-count').innerText = totalCount;
+                        
+                        if (totalCount === 0) {
+                            document.getElementById('unbanned-display-count').innerText = '0';
+                            tbodyUnbanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP liberado encontrado.</td></tr>`;
+                            return;
+                        }
+
+                        allUnbannedIps.forEach(ip => {
+                            const tr = document.createElement('tr');
+                            tr.className = "hover:bg-slate-900/40 transition-colors";
+                            tr.innerHTML = `
+                                <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
+                                <td class="py-3.5 px-6">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">UNBANNED / UNLOCKED</span>
+                                </td>
+                            `;
+                            tbodyUnbanned.appendChild(tr);
+                        });
+                        
+                        document.getElementById('unbanned-display-count').innerText = totalCount;
                     }
 
                     function switchTab(tab) {
                         const tabBanned = document.getElementById('tab-banned');
+                        const tabUnbanned = document.getElementById('tab-unbanned');
                         const tabFailures = document.getElementById('tab-failures');
+                        
                         const panelBanned = document.getElementById('panel-banned');
+                        const panelUnbanned = document.getElementById('panel-unbanned');
                         const panelFailures = document.getElementById('panel-failures');
+
+                        tabBanned.className = tabUnbanned.className = tabFailures.className = "border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
+                        panelBanned.classList.add('hidden');
+                        panelUnbanned.classList.add('hidden');
+                        panelFailures.classList.add('hidden');
 
                         if (tab === 'banned') {
                             tabBanned.className = "border-b-2 border-red-500 text-red-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
-                            tabFailures.className = "border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
                             panelBanned.classList.remove('hidden');
-                            panelFailures.classList.add('hidden');
+                        } else if (tab === 'unbanned') {
+                            tabUnbanned.className = "border-b-2 border-emerald-500 text-emerald-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
+                            panelUnbanned.classList.remove('hidden');
                         } else {
                             tabFailures.className = "border-b-2 border-amber-500 text-amber-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
-                            tabBanned.className = "border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
                             panelFailures.classList.remove('hidden');
-                            panelBanned.classList.add('hidden');
                         }
                     }
 
@@ -258,38 +368,44 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
 
                     async function updateDashboard() {
                         try {
-                            // Salva o texto de pesquisa antes de atualizar
-                            const searchInput = document.getElementById('search-ip');
-                            const savedSearchValue = searchInput.value;
+                            const searchBannedInput = document.getElementById('search-ip');
+                            const savedBannedSearch = searchBannedInput.value;
+
+                            const searchUnbannedInput = document.getElementById('search-unbanned-ip');
+                            const savedUnbannedSearch = searchUnbannedInput.value;
 
                             const response = await fetch('/api/stats');
                             const data = await response.json();
 
                             document.getElementById('total-count').innerText = data.banned.length;
+                            document.getElementById('unbanned-count').innerText = data.unbanned.length;
                             document.getElementById('failure-count').innerText = data.failures.length;
 
-                            const tbodyBanned = document.getElementById('ip-table-body');
                             allBannedIps = data.banned;
-                            if (data.banned.length === 0) {
-                                tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP banido encontrado.</td></tr>`;
-                            } else {
-                                tbodyBanned.innerHTML = data.banned.map(ip => `
-                                    <tr class="hover:bg-slate-900/40 transition-colors">
-                                        <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
-                                        <td class="py-3.5 px-6">
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">BANNED</span>
-                                        </td>
-                                    </tr>
-                                `).join('');
-                                // Restaura o texto de pesquisa e reaplica o filtro
-                                searchInput.value = savedSearchValue;
+                            allUnbannedIps = data.unbanned;
+
+                            buildBannedTable();
+                            buildUnbannedTable();
+
+                            searchBannedInput.value = savedBannedSearch;
+                            if (savedBannedSearch.trim() !== '') {
                                 filterIPs();
                             }
 
+                            searchUnbannedInput.value = savedUnbannedSearch;
+                            if (savedUnbannedSearch.trim() !== '') {
+                                filterUnbannedIPs();
+                            }
+
                             const tbodyFailures = document.getElementById('failure-table-body');
-                            if (data.failures.length === 0) {
+                            const totalFailures = data.failures.length;
+                            document.getElementById('failure-total-count').innerText = totalFailures;
+                            
+                            if (totalFailures === 0) {
+                                document.getElementById('failure-display-count').innerText = '0';
                                 tbodyFailures.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-500 italic">Nenhuma falha detectada recentemente.</td></tr>`;
                             } else {
+                                document.getElementById('failure-display-count').innerText = totalFailures;
                                 tbodyFailures.innerHTML = data.failures.map(f => `
                                     <tr class="hover:bg-slate-900/40 transition-colors">
                                         <td class="py-3.5 px-4 text-slate-400 font-mono text-xs">${f.time.split(' ')[1]}</td>
@@ -313,6 +429,7 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                     startCountdown();
 
                     document.getElementById('search-ip').addEventListener('input', filterIPs);
+                    document.getElementById('search-unbanned-ip').addEventListener('input', filterUnbannedIPs);
                 </script>
             </body>
             </html>
@@ -322,7 +439,6 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
 if __name__ == '__main__':
-    # Configuração dos argumentos da aplicação CLI (Adeus hardcode!)
     parser = argparse.ArgumentParser(description="Fail2Ban Monitor Web Dashboard")
     parser.add_argument('--port', type=int, default=15000, help="Porta para o servidor web (Padrão: 15000)")
     parser.add_argument('--log', type=str, default='/var/log/fail2ban.log', help="Caminho do ficheiro de log do Fail2Ban")
@@ -331,11 +447,10 @@ if __name__ == '__main__':
     print(f"Iniciando painel Fail2Ban na porta {args.port}...")
     print(f"Monitorando o arquivo: {args.log}")
 
-    # Inicializa o servidor e injeta o caminho do log para ser acessado pelo Handler
     server = HTTPServer(('127.0.0.1', args.port), Fail2BanHandler)
     server.log_path = args.log
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\\nServidor encerrado pelo utilizador.")
+        print("\nServidor encerrado pelo utilizador.")
