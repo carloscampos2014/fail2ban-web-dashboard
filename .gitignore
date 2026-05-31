@@ -1,0 +1,17 @@
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos de sistema/Editor
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs (Opcional: se não quiser subir logs para o GitHub)
+*.log
+
+# Ambientes virtuais (caso venha a usar no futuro)
+venv/
+.venv/
+env/
