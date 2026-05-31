@@ -132,9 +132,12 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                     <div class="bg-slate-950 rounded-xl border border-slate-800 shadow-2xl h-[480px] overflow-y-auto">
 
                         <div id="panel-banned" class="block">
+                            <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
+                                <input type="text" id="search-ip" placeholder="🔍 Pesquisar IP..." class="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all text-sm" />
+                            </div>
                             <div class="overflow-x-auto">
                                 <table class="w-full text-left border-collapse">
-                                    <thead class="sticky top-0 bg-slate-950 shadow-md">
+                                    <thead class="sticky top-[56px] bg-slate-950 shadow-md">
                                         <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
                                             <th class="py-3.5 px-6 font-semibold">Endereço IP</th>
                                             <th class="py-3.5 px-6 font-semibold">Status</th>
@@ -167,6 +170,49 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                 <script>
                     let timeLeft = 5;
                     let countdownInterval;
+                    let allBannedIps = [];
+
+                    function filterIPs() {
+                        const searchInput = document.getElementById('search-ip');
+                        const searchValue = searchInput.value.toLowerCase().trim();
+                        const tbodyBanned = document.getElementById('ip-table-body');
+
+                        if (searchValue === '') {
+                            // Reconstrói a tabela com todos os IPs quando o campo está vazio
+                            if (allBannedIps.length === 0) {
+                                tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP banido encontrado.</td></tr>`;
+                            } else {
+                                tbodyBanned.innerHTML = allBannedIps.map(ip => `
+                                    <tr class="hover:bg-slate-900/40 transition-colors">
+                                        <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
+                                        <td class="py-3.5 px-6">
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">BANNED</span>
+                                        </td>
+                                    </tr>
+                                `).join('');
+                            }
+                            return;
+                        }
+
+                        const rows = tbodyBanned.querySelectorAll('tr');
+                        let visibleCount = 0;
+                        rows.forEach(row => {
+                            const ipCell = row.querySelector('td');
+                            if (ipCell) {
+                                const ip = ipCell.textContent.trim();
+                                if (ip.includes(searchValue)) {
+                                    row.style.display = '';
+                                    visibleCount++;
+                                } else {
+                                    row.style.display = 'none';
+                                }
+                            }
+                        });
+
+                        if (visibleCount === 0 && allBannedIps.length > 0) {
+                            tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP encontrado para "${searchValue}"</td></tr>`;
+                        }
+                    }
 
                     function switchTab(tab) {
                         const tabBanned = document.getElementById('tab-banned');
@@ -212,6 +258,10 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
 
                     async function updateDashboard() {
                         try {
+                            // Salva o texto de pesquisa antes de atualizar
+                            const searchInput = document.getElementById('search-ip');
+                            const savedSearchValue = searchInput.value;
+
                             const response = await fetch('/api/stats');
                             const data = await response.json();
 
@@ -219,6 +269,7 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             document.getElementById('failure-count').innerText = data.failures.length;
 
                             const tbodyBanned = document.getElementById('ip-table-body');
+                            allBannedIps = data.banned;
                             if (data.banned.length === 0) {
                                 tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP banido encontrado.</td></tr>`;
                             } else {
@@ -230,6 +281,9 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                                         </td>
                                     </tr>
                                 `).join('');
+                                // Restaura o texto de pesquisa e reaplica o filtro
+                                searchInput.value = savedSearchValue;
+                                filterIPs();
                             }
 
                             const tbodyFailures = document.getElementById('failure-table-body');
@@ -257,6 +311,8 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
 
                     updateDashboard();
                     startCountdown();
+
+                    document.getElementById('search-ip').addEventListener('input', filterIPs);
                 </script>
             </body>
             </html>
