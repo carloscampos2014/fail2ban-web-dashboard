@@ -197,15 +197,17 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                     .metric-card::after { content: ''; position: absolute; width: 130px; height: 130px; right: -42px; top: -50px; border-radius: 999px; background: var(--metric-glow); filter: blur(2px); opacity: .25; }
                     .spin-once { animation: spin 0.6s ease-in-out; }
                     .pulse-soft { animation: pulse-soft 2s ease-in-out infinite; }
+                    .main-panel { animation: panel-in .25s ease-out; }
                     @keyframes spin { 100% { transform: rotate(360deg); } }
                     @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+                    @keyframes panel-in { from { opacity: .35; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
                     @media (max-width: 640px) { .table-wrap { margin-left: -1rem; margin-right: -1rem; } }
                 </style>
             </head>
             <body class="text-slate-100 font-sans min-h-screen page-glow">
                 <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
 
-                    <header class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-10">
+                    <header class="sticky top-0 z-40 -mx-4 sm:-mx-6 px-4 sm:px-6 py-5 mb-6 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 bg-[#080b18]/90 backdrop-blur-xl border-b border-slate-800/60">
                         <div>
                             <div class="flex items-center gap-3 mb-4">
                                 <span class="flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/25 text-xl">🛡️</span>
@@ -232,6 +234,13 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         </div>
                     </header>
 
+                    <nav class="flex items-center gap-1 p-1.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 mb-6 overflow-x-auto" aria-label="Seções do dashboard">
+                        <button id="main-tab-summary" onclick="switchMainTab('summary')" class="main-tab main-tab-active flex-1 min-w-[110px] rounded-xl px-4 py-3 text-xs font-bold text-violet-200 bg-violet-500/15 border border-violet-400/30 transition-all">◈ Resumo</button>
+                        <button id="main-tab-analysis" onclick="switchMainTab('analysis')" class="main-tab flex-1 min-w-[110px] rounded-xl px-4 py-3 text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 border border-transparent transition-all">◌ Análise</button>
+                        <button id="main-tab-events" onclick="switchMainTab('events')" class="main-tab flex-1 min-w-[130px] rounded-xl px-4 py-3 text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 border border-transparent transition-all">☷ IPs / Eventos</button>
+                    </nav>
+
+                    <section id="main-panel-summary" class="main-panel block">
                     <section class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 mb-10">
                         <div class="metric-card glass rounded-2xl p-5 sm:p-6" style="--metric-glow:#f43f5e">
                             <div class="flex items-start justify-between"><div class="flex items-center gap-2 text-rose-300"><span class="flex w-8 h-8 items-center justify-center rounded-lg bg-rose-500/15">⛔</span><p class="text-xs font-bold uppercase tracking-wider">IPs bloqueados</p></div><span class="text-[10px] font-bold uppercase tracking-widest text-rose-300/70">Ativos</span></div>
@@ -249,6 +258,14 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             <p class="text-xs text-slate-500 mt-1">Falhas registradas no monitoramento</p>
                         </div>
                     </section>
+
+                    <div class="glass rounded-2xl p-5 sm:p-6 flex items-center justify-between gap-4">
+                        <div><p class="text-xs font-bold uppercase tracking-wider text-emerald-300">Saúde da proteção</p><p class="text-sm text-slate-300 mt-1">Status atual do serviço Fail2Ban</p></div>
+                        <div class="flex items-center gap-2"><span id="summary-health-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span><span id="summary-health-text" class="text-sm font-bold text-emerald-300">Verificando...</span></div>
+                    </div>
+                    </section>
+
+                    <section id="main-panel-analysis" class="main-panel hidden">
 
                     <section class="glass rounded-2xl p-4 sm:p-5 mb-6">
                         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -282,6 +299,9 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         <div class="overflow-x-auto"><table class="w-full text-left"><thead><tr class="border-b border-slate-800 text-[10px] uppercase tracking-[.18em] text-slate-500"><th class="py-3 px-3">Endereço IP</th><th class="py-3 px-3">Jails</th><th class="py-3 px-3 text-right">Falhas</th></tr></thead><tbody id="top-ips-body" class="divide-y divide-slate-800/60"><tr><td colspan="3" class="py-8 text-center text-xs text-slate-500">Aguardando dados...</td></tr></tbody></table></div>
                     </section>
 
+                    </section>
+
+                    <section id="main-panel-events" class="main-panel hidden">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                         <div><h2 class="text-lg font-bold text-white">Atividade de segurança</h2><p class="text-xs text-slate-500 mt-1">Explore os eventos coletados pelo Fail2Ban</p></div>
                         <nav class="flex items-center gap-1 p-1 rounded-xl bg-slate-900/70 border border-slate-800/80" aria-label="Tabs">
@@ -352,6 +372,7 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         </div>
 
                     </div>
+                    </section>
                 </div>
 
                 <script>
@@ -484,6 +505,14 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         }
                     }
 
+                    function switchMainTab(tab) {
+                        document.querySelectorAll('.main-panel').forEach(panel => panel.classList.add('hidden'));
+                        document.getElementById(`main-panel-${tab}`).classList.remove('hidden');
+                        document.querySelectorAll('.main-tab').forEach(button => button.className = 'main-tab flex-1 min-w-[110px] rounded-xl px-4 py-3 text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 border border-transparent transition-all');
+                        const active = document.getElementById(`main-tab-${tab}`);
+                        active.className = 'main-tab main-tab-active flex-1 min-w-[110px] rounded-xl px-4 py-3 text-xs font-bold text-violet-200 bg-violet-500/15 border border-violet-400/30 transition-all';
+                    }
+
                     function updateServiceHealth(health) {
                         const healthy = health && health.state === 'healthy';
                         const statusText = document.getElementById('status-text');
@@ -493,6 +522,11 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         statusText.className = healthy ? 'text-xs font-semibold text-emerald-300' : 'text-xs font-semibold text-amber-300';
                         statusDot.className = healthy ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400' : 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400';
                         statusPing.className = healthy ? 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75' : 'absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-50';
+                        const summaryText = document.getElementById('summary-health-text');
+                        const summaryDot = document.getElementById('summary-health-dot');
+                        summaryText.innerText = healthy ? 'Serviço operacional' : 'Serviço indisponível';
+                        summaryText.className = healthy ? 'text-sm font-bold text-emerald-300' : 'text-sm font-bold text-amber-300';
+                        summaryDot.className = healthy ? 'w-2.5 h-2.5 rounded-full bg-emerald-400' : 'w-2.5 h-2.5 rounded-full bg-amber-400';
                     }
 
                     function updateCharts(charts) {
