@@ -92,88 +92,95 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                 <title>Fail2Ban Monitor</title>
                 <script src="https://cdn.tailwindcss.com"></script>
                 <style>
-                    ::-webkit-scrollbar { width: 6px; height: 6px; }
-                    ::-webkit-scrollbar-track { background: #020617; }
-                    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-                    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+                    :root { color-scheme: dark; }
+                    ::-webkit-scrollbar { width: 8px; height: 8px; }
+                    ::-webkit-scrollbar-track { background: #111827; }
+                    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 999px; }
+                    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+                    body { background: #080b18; }
+                    .page-glow { background: radial-gradient(circle at 8% 0%, rgba(124, 58, 237, .22), transparent 32%), radial-gradient(circle at 94% 8%, rgba(14, 165, 233, .16), transparent 28%); }
+                    .glass { background: rgba(15, 23, 42, .72); border: 1px solid rgba(148, 163, 184, .14); box-shadow: 0 24px 70px rgba(2, 6, 23, .28); backdrop-filter: blur(18px); }
+                    .metric-card { position: relative; overflow: hidden; transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+                    .metric-card:hover { transform: translateY(-3px); border-color: rgba(148, 163, 184, .3); box-shadow: 0 18px 45px rgba(2, 6, 23, .42); }
+                    .metric-card::after { content: ''; position: absolute; width: 130px; height: 130px; right: -42px; top: -50px; border-radius: 999px; background: var(--metric-glow); filter: blur(2px); opacity: .25; }
                     .spin-once { animation: spin 0.6s ease-in-out; }
+                    .pulse-soft { animation: pulse-soft 2s ease-in-out infinite; }
                     @keyframes spin { 100% { transform: rotate(360deg); } }
+                    @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+                    @media (max-width: 640px) { .table-wrap { margin-left: -1rem; margin-right: -1rem; } }
                 </style>
             </head>
-            <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
-                <div class="max-w-5xl mx-auto px-4 py-8">
+            <body class="text-slate-100 font-sans min-h-screen page-glow">
+                <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
 
-                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-6 mb-8 gap-4">
+                    <header class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-10">
                         <div>
-                            <h1 class="text-3xl font-bold tracking-tight text-white flex items-center gap-3">
-                                <span class="text-red-500">🛡️</span> Fail2Ban Dashboard
-                            </h1>
-                            <p class="text-slate-400 text-sm mt-1">Monitoramento de segurança da VPS em tempo real</p>
+                            <div class="flex items-center gap-3 mb-4">
+                                <span class="flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/25 text-xl">🛡️</span>
+                                <span class="text-xs font-bold uppercase tracking-[.24em] text-violet-300">Security command center</span>
+                            </div>
+                            <h1 class="text-3xl sm:text-4xl font-black tracking-tight text-white">Fail2Ban <span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-fuchsia-400 to-sky-400">Dashboard</span></h1>
+                            <p class="text-slate-400 text-sm mt-2 max-w-xl">Visão geral da proteção da sua VPS, com eventos e bloqueios monitorados em tempo real.</p>
                         </div>
 
-                        <div class="flex items-center gap-3 bg-slate-800/80 p-2 px-3 rounded-lg border border-slate-700 w-fit self-end sm:self-auto">
-                            <div class="flex items-center gap-2 text-xs text-slate-300 border-r border-slate-700 pr-3">
-                                <span class="relative flex h-2 w-2">
-                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        <div class="glass rounded-2xl p-3 flex items-center gap-3 w-fit">
+                            <div class="flex items-center gap-2.5 pr-3 border-r border-slate-700/70">
+                                <span class="relative flex h-2.5 w-2.5">
+                                    <span id="status-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span id="status-dot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
                                 </span>
-                                <span>Atualizando em: <b id="countdown-text" class="text-emerald-400 font-mono text-sm">5s</b></span>
+                                <div class="leading-tight"><p class="text-[10px] uppercase tracking-wider text-slate-500">Status</p><p id="status-text" class="text-xs font-semibold text-emerald-300">Sistema online</p></div>
                             </div>
-
-                            <button id="btn-refresh" onclick="forceRefresh()" class="flex items-center justify-center p-1.5 rounded-md bg-slate-700 hover:bg-slate-600 active:scale-95 text-slate-200 hover:text-white transition-all focus:outline-none" title="Recarregar agora">
+                            <div class="text-right leading-tight"><p class="text-[10px] uppercase tracking-wider text-slate-500">Próxima atualização</p><p id="countdown-text" class="text-sm font-bold text-white tabular-nums">5s</p></div>
+                            <button id="btn-refresh" onclick="forceRefresh()" class="flex items-center justify-center w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-slate-200 hover:text-white transition-all focus:outline-none focus:ring-2 focus:ring-violet-400/50" title="Recarregar agora">
                                 <svg id="svg-refresh" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.253 8H18"></path>
                                 </svg>
                             </button>
                         </div>
-                    </div>
+                    </header>
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-800 shadow-xl">
-                            <p class="text-sm font-medium text-slate-400 uppercase tracking-wider">IPs Banidos Atualmente</p>
-                            <p id="total-count" class="text-4xl font-extrabold text-red-400 mt-2">0</p>
+                    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 mb-10">
+                        <div class="metric-card glass rounded-2xl p-5 sm:p-6" style="--metric-glow:#f43f5e">
+                            <div class="flex items-start justify-between"><div class="flex items-center gap-2 text-rose-300"><span class="flex w-8 h-8 items-center justify-center rounded-lg bg-rose-500/15">⛔</span><p class="text-xs font-bold uppercase tracking-wider">IPs bloqueados</p></div><span class="text-[10px] font-bold uppercase tracking-widest text-rose-300/70">Ativos</span></div>
+                            <p id="total-count" class="text-4xl font-black text-white mt-5 tabular-nums">0</p>
+                            <p class="text-xs text-slate-500 mt-1">Ameaças atualmente contidas</p>
                         </div>
-
-                        <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-800 shadow-xl">
-                            <p class="text-sm font-medium text-slate-400 uppercase tracking-wider">IPs Liberados Únicos</p>
-                            <p id="unbanned-count" class="text-4xl font-extrabold text-emerald-400 mt-2">0</p>
+                        <div class="metric-card glass rounded-2xl p-5 sm:p-6" style="--metric-glow:#34d399">
+                            <div class="flex items-start justify-between"><div class="flex items-center gap-2 text-emerald-300"><span class="flex w-8 h-8 items-center justify-center rounded-lg bg-emerald-500/15">✓</span><p class="text-xs font-bold uppercase tracking-wider">IPs liberados</p></div><span class="text-[10px] font-bold uppercase tracking-widest text-emerald-300/70">Histórico</span></div>
+                            <p id="unbanned-count" class="text-4xl font-black text-white mt-5 tabular-nums">0</p>
+                            <p class="text-xs text-slate-500 mt-1">Endereços únicos desbloqueados</p>
                         </div>
-
-                        <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-800 shadow-xl">
-                            <p class="text-sm font-medium text-slate-400 uppercase tracking-wider">Total de Falhas / Tentativas</p>
-                            <p id="failure-count" class="text-4xl font-extrabold text-amber-400 mt-2">0</p>
+                        <div class="metric-card glass rounded-2xl p-5 sm:p-6" style="--metric-glow:#fbbf24">
+                            <div class="flex items-start justify-between"><div class="flex items-center gap-2 text-amber-300"><span class="flex w-8 h-8 items-center justify-center rounded-lg bg-amber-500/15">⚡</span><p class="text-xs font-bold uppercase tracking-wider">Tentativas detectadas</p></div><span class="text-[10px] font-bold uppercase tracking-widest text-amber-300/70">Recentes</span></div>
+                            <p id="failure-count" class="text-4xl font-black text-white mt-5 tabular-nums">0</p>
+                            <p class="text-xs text-slate-500 mt-1">Falhas registradas no monitoramento</p>
                         </div>
-                    </div>
+                    </section>
 
-                    <div class="border-b border-slate-800 mb-6">
-                        <nav class="flex space-x-8" aria-label="Tabs">
-                            <button id="tab-banned" onclick="switchTab('banned')" class="border-b-2 border-red-500 text-red-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none">
-                                <span>❌</span> IPs Banidos
-                            </button>
-                            <button id="tab-unbanned" onclick="switchTab('unbanned')" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none">
-                                <span>✅</span> IPs Liberados
-                            </button>
-                            <button id="tab-failures" onclick="switchTab('failures')" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none">
-                                <span>⚠️</span> Histórico de Falhas Detalhado
-                            </button>
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                        <div><h2 class="text-lg font-bold text-white">Atividade de segurança</h2><p class="text-xs text-slate-500 mt-1">Explore os eventos coletados pelo Fail2Ban</p></div>
+                        <nav class="flex items-center gap-1 p-1 rounded-xl bg-slate-900/70 border border-slate-800/80" aria-label="Tabs">
+                            <button id="tab-banned" onclick="switchTab('banned')" class="border-b-2 border-rose-400 bg-rose-500/10 text-rose-300 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all"><span>⛔</span> Bloqueados</button>
+                            <button id="tab-unbanned" onclick="switchTab('unbanned')" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all"><span>✓</span> Liberados</button>
+                            <button id="tab-failures" onclick="switchTab('failures')" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all"><span>⚡</span> Falhas</button>
                         </nav>
                     </div>
-
-                    <div class="bg-slate-950 rounded-xl border border-slate-800 shadow-2xl flex flex-col max-h-[700px]">
+                    <div class="glass rounded-2xl flex flex-col max-h-[700px] overflow-hidden">
 
                         <div id="panel-banned" class="block flex flex-col flex-1 overflow-hidden">
-                            <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
+                            <div class="sticky top-0 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 py-4 z-10">
                                 <div class="flex gap-3 items-center mb-3">
-                                    <input type="text" id="search-ip" placeholder="🔍 Pesquisar IP Banido..." class="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all text-sm" />
+                                    <input type="text" id="search-ip" placeholder="🔍  Pesquisar endereço IP..." aria-label="Pesquisar IP bloqueado" class="flex-1 px-4 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-400/20 transition-all text-sm" />
                                     <span class="text-xs text-slate-400">Exibindo: <span id="banned-display-count" class="font-bold text-red-400">0</span>/<span id="banned-total-count" class="font-bold">0</span></span>
                                 </div>
                             </div>
-                            <div class="overflow-x-auto overflow-y-auto flex-1">
+                            <div class="table-wrap overflow-x-auto overflow-y-auto flex-1">
                                 <table class="w-full text-left border-collapse">
-                                    <thead class="sticky top-0 bg-slate-950 shadow-md">
-                                        <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
-                                            <th class="py-3.5 px-6 font-semibold">Endereço IP</th>
-                                            <th class="py-3.5 px-6 font-semibold">Status</th>
+                                    <thead class="sticky top-0 bg-slate-950/95 shadow-md">
+                                        <tr class="border-b border-slate-800/80 text-slate-500 text-[10px] uppercase tracking-[.18em] bg-slate-900/50">
+                                            <th class="py-3.5 px-4 sm:px-6 font-bold">Endereço IP</th>
+                                            <th class="py-3.5 px-4 sm:px-6 font-bold">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody id="ip-table-body" class="divide-y divide-slate-800/60 text-sm"></tbody>
@@ -182,18 +189,18 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         </div>
 
                         <div id="panel-unbanned" class="hidden flex flex-col flex-1 overflow-hidden">
-                            <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
+                            <div class="sticky top-0 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 py-4 z-10">
                                 <div class="flex gap-3 items-center mb-3">
-                                    <input type="text" id="search-unbanned-ip" placeholder="🔍 Pesquisar IP Liberado..." class="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all text-sm" />
+                                    <input type="text" id="search-unbanned-ip" placeholder="🔍  Pesquisar endereço IP..." aria-label="Pesquisar IP liberado" class="flex-1 px-4 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 transition-all text-sm" />
                                     <span class="text-xs text-slate-400">Exibindo: <span id="unbanned-display-count" class="font-bold text-emerald-400">0</span>/<span id="unbanned-total-count" class="font-bold">0</span></span>
                                 </div>
                             </div>
-                            <div class="overflow-x-auto overflow-y-auto flex-1">
+                            <div class="table-wrap overflow-x-auto overflow-y-auto flex-1">
                                 <table class="w-full text-left border-collapse">
-                                    <thead class="sticky top-0 bg-slate-950 shadow-md">
-                                        <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
-                                            <th class="py-3.5 px-6 font-semibold">Endereço IP</th>
-                                            <th class="py-3.5 px-6 font-semibold">Status</th>
+                                    <thead class="sticky top-0 bg-slate-950/95 shadow-md">
+                                        <tr class="border-b border-slate-800/80 text-slate-500 text-[10px] uppercase tracking-[.18em] bg-slate-900/50">
+                                            <th class="py-3.5 px-4 sm:px-6 font-bold">Endereço IP</th>
+                                            <th class="py-3.5 px-4 sm:px-6 font-bold">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody id="unbanned-table-body" class="divide-y divide-slate-800/60 text-sm"></tbody>
@@ -202,17 +209,17 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         </div>
 
                         <div id="panel-failures" class="hidden flex flex-col flex-1 overflow-hidden">
-                            <div class="sticky top-0 bg-slate-950 border-b border-slate-800 px-6 py-4 z-10">
-                                <span class="text-xs text-slate-400">Exibindo: <span id="failure-display-count" class="font-bold text-amber-400">0</span>/<span id="failure-total-count" class="font-bold">0</span> últimas falhas</span>
+                            <div class="sticky top-0 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 py-4 z-10">
+                                <span class="text-xs text-slate-400">Exibindo <span id="failure-display-count" class="font-bold text-amber-300">0</span> de <span id="failure-total-count" class="font-bold text-slate-200">0</span> últimas falhas</span>
                             </div>
-                            <div class="overflow-x-auto overflow-y-auto flex-1">
+                            <div class="table-wrap overflow-x-auto overflow-y-auto flex-1">
                                 <table class="w-full text-left border-collapse">
-                                    <thead class="sticky top-0 bg-slate-950 shadow-md">
-                                        <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider bg-slate-900/40">
-                                            <th class="py-3.5 px-4 font-semibold">Horário</th>
-                                            <th class="py-3.5 px-4 font-semibold">Alvo (Jail)</th>
-                                            <th class="py-3.5 px-4 font-semibold">IP Origem</th>
-                                            <th class="py-3.5 px-4 font-semibold">Registro do Log (Detalhamento)</th>
+                                    <thead class="sticky top-0 bg-slate-950/95 shadow-md">
+                                        <tr class="border-b border-slate-800/80 text-slate-500 text-[10px] uppercase tracking-[.18em] bg-slate-900/50">
+                                            <th class="py-3.5 px-4 font-bold">Horário</th>
+                                            <th class="py-3.5 px-4 font-bold">Alvo (Jail)</th>
+                                            <th class="py-3.5 px-4 font-bold">IP Origem</th>
+                                            <th class="py-3.5 px-4 font-bold">Registro do Log</th>
                                         </tr>
                                     </thead>
                                     <tbody id="failure-table-body" class="divide-y divide-slate-800/60 text-sm"></tbody>
@@ -235,13 +242,17 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         const tbodyBanned = document.getElementById('ip-table-body');
 
                         const rows = tbodyBanned.querySelectorAll('tr');
+                        let visibleCount = 0;
                         rows.forEach(row => {
                             const ipCell = row.querySelector('td');
                             if (ipCell) {
                                 const ip = ipCell.textContent.trim();
-                                row.style.display = ip.includes(searchValue) ? '' : 'none';
+                                const visible = ip.toLowerCase().includes(searchValue);
+                                row.style.display = visible ? '' : 'none';
+                                if (visible) visibleCount++;
                             }
                         });
+                        document.getElementById('banned-display-count').innerText = visibleCount;
                     }
 
                     function filterUnbannedIPs() {
@@ -250,13 +261,17 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         const tbodyUnbanned = document.getElementById('unbanned-table-body');
 
                         const rows = tbodyUnbanned.querySelectorAll('tr');
+                        let visibleCount = 0;
                         rows.forEach(row => {
                             const ipCell = row.querySelector('td');
                             if (ipCell) {
                                 const ip = ipCell.textContent.trim();
-                                row.style.display = ip.includes(searchValue) ? '' : 'none';
+                                const visible = ip.toLowerCase().includes(searchValue);
+                                row.style.display = visible ? '' : 'none';
+                                if (visible) visibleCount++;
                             }
                         });
+                        document.getElementById('unbanned-display-count').innerText = visibleCount;
                     }
 
                     // Forçando reconstrução limpa via iteração robusta
@@ -269,17 +284,17 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         
                         if (totalCount === 0) {
                             document.getElementById('banned-display-count').innerText = '0';
-                            tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP banido encontrado.</td></tr>`;
+                            tbodyBanned.innerHTML = `<tr><td colspan="2" class="py-16 text-center"><div class="text-3xl mb-3 opacity-60">🛡️</div><p class="text-sm font-semibold text-slate-300">Nenhum IP bloqueado</p><p class="text-xs text-slate-500 mt-1">A sua rede está limpa neste momento.</p></td></tr>`;
                             return;
                         }
 
                         allBannedIps.forEach(ip => {
                             const tr = document.createElement('tr');
-                            tr.className = "hover:bg-slate-900/40 transition-colors";
+                            tr.className = "hover:bg-rose-500/[.04] transition-colors border-l-2 border-transparent hover:border-rose-400";
                             tr.innerHTML = `
-                                <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
-                                <td class="py-3.5 px-6">
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">BANNED</span>
+                                    <td class="py-4 px-4 sm:px-6 font-mono text-slate-200 font-medium">${ip}</td>
+                                    <td class="py-4 px-4 sm:px-6">
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider bg-rose-500/10 text-rose-300 border border-rose-500/20"><span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> BLOQUEADO</span>
                                 </td>
                             `;
                             tbodyBanned.appendChild(tr);
@@ -298,17 +313,17 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         
                         if (totalCount === 0) {
                             document.getElementById('unbanned-display-count').innerText = '0';
-                            tbodyUnbanned.innerHTML = `<tr><td colspan="2" class="py-8 text-center text-slate-500 italic">Nenhum IP liberado encontrado.</td></tr>`;
+                            tbodyUnbanned.innerHTML = `<tr><td colspan="2" class="py-16 text-center"><div class="text-3xl mb-3 opacity-60">✓</div><p class="text-sm font-semibold text-slate-300">Nenhum IP liberado</p><p class="text-xs text-slate-500 mt-1">O histórico de desbloqueios aparecerá aqui.</p></td></tr>`;
                             return;
                         }
 
                         allUnbannedIps.forEach(ip => {
                             const tr = document.createElement('tr');
-                            tr.className = "hover:bg-slate-900/40 transition-colors";
+                            tr.className = "hover:bg-emerald-500/[.04] transition-colors border-l-2 border-transparent hover:border-emerald-400";
                             tr.innerHTML = `
-                                <td class="py-3.5 px-6 font-mono text-slate-200 font-medium">${ip}</td>
-                                <td class="py-3.5 px-6">
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">UNBANNED / UNLOCKED</span>
+                                    <td class="py-4 px-4 sm:px-6 font-mono text-slate-200 font-medium">${ip}</td>
+                                    <td class="py-4 px-4 sm:px-6">
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> LIBERADO</span>
                                 </td>
                             `;
                             tbodyUnbanned.appendChild(tr);
@@ -326,19 +341,19 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         const panelUnbanned = document.getElementById('panel-unbanned');
                         const panelFailures = document.getElementById('panel-failures');
 
-                        tabBanned.className = tabUnbanned.className = tabFailures.className = "border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
+                        tabBanned.className = tabUnbanned.className = tabFailures.className = "border-b-2 border-transparent text-slate-400 hover:text-slate-200 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all";
                         panelBanned.classList.add('hidden');
                         panelUnbanned.classList.add('hidden');
                         panelFailures.classList.add('hidden');
 
                         if (tab === 'banned') {
-                            tabBanned.className = "border-b-2 border-red-500 text-red-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
+                            tabBanned.className = "border-b-2 border-rose-400 bg-rose-500/10 text-rose-300 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all";
                             panelBanned.classList.remove('hidden');
                         } else if (tab === 'unbanned') {
-                            tabUnbanned.className = "border-b-2 border-emerald-500 text-emerald-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
+                            tabUnbanned.className = "border-b-2 border-emerald-400 bg-emerald-500/10 text-emerald-300 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all";
                             panelUnbanned.classList.remove('hidden');
                         } else {
-                            tabFailures.className = "border-b-2 border-amber-500 text-amber-400 px-1 pb-4 text-sm font-medium tracking-wide flex items-center gap-2 focus:outline-none";
+                            tabFailures.className = "border-b-2 border-amber-400 bg-amber-500/10 text-amber-300 rounded-lg px-3 py-2 text-xs font-bold flex items-center gap-2 focus:outline-none transition-all";
                             panelFailures.classList.remove('hidden');
                         }
                     }
@@ -366,6 +381,23 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         }, 1000);
                     }
 
+                    function setConnectionStatus(online) {
+                        const statusText = document.getElementById('status-text');
+                        const statusDot = document.getElementById('status-dot');
+                        const statusPing = document.getElementById('status-ping');
+                        if (online) {
+                            statusText.innerText = 'Sistema online';
+                            statusText.className = 'text-xs font-semibold text-emerald-300';
+                            statusDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400';
+                            statusPing.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75';
+                        } else {
+                            statusText.innerText = 'Falha de conexão';
+                            statusText.className = 'text-xs font-semibold text-rose-300';
+                            statusDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-400';
+                            statusPing.className = 'absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-50';
+                        }
+                    }
+
                     async function updateDashboard() {
                         try {
                             const searchBannedInput = document.getElementById('search-ip');
@@ -376,6 +408,7 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
 
                             const response = await fetch('/api/stats');
                             const data = await response.json();
+                            setConnectionStatus(true);
 
                             document.getElementById('total-count').innerText = data.banned.length;
                             document.getElementById('unbanned-count').innerText = data.unbanned.length;
@@ -403,11 +436,11 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             
                             if (totalFailures === 0) {
                                 document.getElementById('failure-display-count').innerText = '0';
-                                tbodyFailures.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-500 italic">Nenhuma falha detectada recentemente.</td></tr>`;
+                                tbodyFailures.innerHTML = `<tr><td colspan="4" class="py-16 text-center"><div class="text-3xl mb-3 opacity-60">✨</div><p class="text-sm font-semibold text-slate-300">Nenhuma falha recente</p><p class="text-xs text-slate-500 mt-1">Nenhuma tentativa suspeita foi detectada.</p></td></tr>`;
                             } else {
                                 document.getElementById('failure-display-count').innerText = totalFailures;
                                 tbodyFailures.innerHTML = data.failures.map(f => `
-                                    <tr class="hover:bg-slate-900/40 transition-colors">
+                                    <tr class="hover:bg-amber-500/[.04] transition-colors border-l-2 border-transparent hover:border-amber-400">
                                         <td class="py-3.5 px-4 text-slate-400 font-mono text-xs">${f.time.split(' ')[1]}</td>
                                         <td class="py-3.5 px-4">
                                             <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono text-xs font-semibold">${f.jail}</span>
@@ -421,6 +454,7 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             }
 
                         } catch (error) {
+                            setConnectionStatus(false);
                             console.error("Erro na atualização automática:", error);
                         }
                     }
