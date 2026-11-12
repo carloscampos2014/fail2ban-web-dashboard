@@ -2,57 +2,128 @@ import os
 import re
 import argparse
 import json
+import shutil
+import subprocess
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 class Fail2BanHandler(SimpleHTTPRequestHandler):
-    def get_fail2ban_stats(self):
+    def _get_fail2ban_status(self):
+        if not shutil.which('fail2ban-client'):
+            return {"state": "unavailable", "message": "fail2ban-client não encontrado", "jails": []}
+
+        try:
+            overview = subprocess.run(
+                ['fail2ban-client', 'status'], capture_output=True, text=True,
+                timeout=3, check=False
+            )
+            if overview.returncode != 0:
+                return {"state": "unavailable", "message": overview.stderr.strip() or "Serviço indisponível", "jails": []}
+
+            jail_match = re.search(r'Jail list:\s*(.*)', overview.stdout)
+            jail_names = [name.strip() for name in (jail_match.group(1).split(',') if jail_match else []) if name.strip()]
+            jails = []
+            for jail in jail_names:
+                result = subprocess.run(
+                    ['fail2ban-client', 'status', jail], capture_output=True, text=True,
+                    timeout=3, check=False
+                )
+                text = result.stdout
+                def value(label):
+                    match = re.search(rf'\b{re.escape(label)}:\s*(\d+)', text)
+                    return int(match.group(1)) if match else 0
+
+                banned_list_match = re.search(r'Banned IP list:\s*(.*)', text)
+                jails.append({
+                    "name": jail,
+                    "currently_failed": value('Currently failed'),
+                    "total_failed": value('Total failed'),
+                    "currently_banned": value('Currently banned'),
+                    "total_banned": value('Total banned'),
+                    "banned_ips": banned_list_match.group(1).split() if banned_list_match else []
+                })
+            return {"state": "healthy", "message": "Serviço operacional", "jails": jails}
+        except (OSError, subprocess.SubprocessError) as error:
+            return {"state": "unavailable", "message": str(error), "jails": []}
+
+    def get_fail2ban_stats(self, period_hours=24, jail_filter='all'):
         log_path = self.server.log_path
         banned_ips = set()
         unbanned_ips = set()
-        recent_failures = []
+        events = []
+        ip_jails = defaultdict(set)
+        now = datetime.now()
+        cutoff = now - timedelta(hours=period_hours)
+        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
 
         if os.path.exists(log_path):
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
-                    # 1. Capturar os UNBANS
+                    timestamp_match = re.match(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
+                    timestamp = None
+                    if timestamp_match:
+                        try:
+                            timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%d %H:%M:%S')
+                        except ValueError:
+                            pass
+                    jail_match = re.search(r'\[([^\]]+)\]\s+(?:Found|Ban|Unban)', line)
+                    jail = jail_match.group(1) if jail_match else 'Geral'
                     if 'Unban' in line:
-                        match = re.search(r'Unban\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                        match = re.search(rf'Unban\s+({ip_pattern})', line)
                         if match:
                             ip = match.group(1)
                             unbanned_ips.add(ip)
                             if ip in banned_ips:
                                 banned_ips.remove(ip)
-
-                    # 2. Capturar os BANS ATIVOS
                     elif 'Ban' in line:
-                        match = re.search(r'\bBan\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                        match = re.search(rf'\bBan\s+({ip_pattern})', line)
                         if match:
                             ip = match.group(1)
                             banned_ips.add(ip)
+                            ip_jails[ip].add(jail)
                             if ip in unbanned_ips:
                                 unbanned_ips.remove(ip)
-
-                    # 3. Capturar as FALHAS
                     elif 'Found' in line:
-                        match_time = re.match(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
-                        match_jail = re.search(r'\[(.*?)\]\s+Found', line)
-                        match_ip = re.search(r'Found\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                        match_ip = re.search(rf'Found\s+({ip_pattern})', line)
 
                         if match_ip:
-                            time_str = match_time.group(1) if match_time else "Desconhecido"
-                            jail_str = match_jail.group(1) if match_jail else "Geral"
-                            ip_str = match_ip.group(1)
-
+                            ip = match_ip.group(1)
                             detail_str = line.strip()
                             if "INFO" in detail_str:
                                 detail_str = detail_str.split("INFO")[-1].strip()
+                            if timestamp:
+                                events.append({"type": "failure", "time": timestamp, "time_text": timestamp_match.group(1), "jail": jail, "ip": ip, "detail": detail_str})
 
-                            recent_failures.insert(0, {
-                                "time": time_str,
-                                "jail": jail_str,
-                                "ip": ip_str,
-                                "detail": detail_str
-                            })
+                    if ('Ban' in line or 'Found' in line) and timestamp:
+                        event_type = 'ban' if 'Ban' in line else 'failure'
+                        ip_match = re.search(rf'(?:Ban|Found)\s+({ip_pattern})', line)
+                        if ip_match and event_type == 'ban':
+                            events.append({"type": event_type, "time": timestamp, "time_text": timestamp.strftime('%Y-%m-%d %H:%M:%S'), "jail": jail, "ip": ip_match.group(1), "detail": line.strip()})
+
+        status = self._get_fail2ban_status()
+        if status["jails"]:
+            for jail in status["jails"]:
+                for ip in jail["banned_ips"]:
+                    banned_ips.add(ip)
+                    ip_jails[ip].add(jail["name"])
+
+        filtered_events = [event for event in events if event['time'] and event['time'] >= cutoff and (jail_filter == 'all' or event['jail'] == jail_filter)]
+        failures = [event for event in filtered_events if event['type'] == 'failure']
+        ban_events = [event for event in filtered_events if event['type'] == 'ban']
+        failure_counts = Counter(event['ip'] for event in failures)
+        jail_counts = Counter(event['jail'] for event in failures)
+        hourly = Counter(event['time'].replace(minute=0, second=0, microsecond=0).isoformat() for event in failures)
+        hourly_labels = []
+        hourly_values = []
+        for offset in range(period_hours - 1, -1, -1):
+            bucket = (now - timedelta(hours=offset)).replace(minute=0, second=0, microsecond=0)
+            hourly_labels.append(bucket.strftime('%d/%m %Hh'))
+            hourly_values.append(hourly.get(bucket.isoformat(), 0))
+
+        recent_failures = [{"time": event["time_text"], "jail": event["jail"], "ip": event["ip"], "detail": event["detail"]} for event in reversed(failures[-100:])]
+        active_jails = status["jails"] if jail_filter == 'all' else [item for item in status["jails"] if item['name'] == jail_filter]
 
         lista_banidos = sorted(list(banned_ips))
         lista_liberados = sorted(list(unbanned_ips))
@@ -66,15 +137,35 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
         return {
             "banned": lista_banidos,
             "unbanned": lista_liberados,
-            "failures": recent_failures[:100]
+            "failures": recent_failures,
+            "filters": {"period": period_hours, "jail": jail_filter},
+            "health": status,
+            "metrics": {
+                "recent_bans": len(ban_events),
+                "active_jails": len(active_jails),
+                "attack_rate": round(len(failures) / max(period_hours, 1), 1),
+                "total_failures": len(failures)
+            },
+            "charts": {
+                "hourly": {"labels": hourly_labels, "values": hourly_values},
+                "jails": {"labels": list(jail_counts.keys()), "values": list(jail_counts.values())}
+            },
+            "top_ips": [{"ip": ip, "count": count, "jails": sorted(ip_jails.get(ip, set()))} for ip, count in failure_counts.most_common(10)],
+            "jails": active_jails
         }
 
     def do_GET(self):
-        if self.path == '/api/stats':
+        if urlsplit(self.path).path == '/api/stats':
+            params = parse_qs(urlsplit(self.path).query)
+            try:
+                period_hours = max(1, min(int(params.get('period', ['24'])[0]), 168))
+            except ValueError:
+                period_hours = 24
+            jail_filter = params.get('jail', ['all'])[0]
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            stats = self.get_fail2ban_stats()
+            stats = self.get_fail2ban_stats(period_hours, jail_filter)
             self.wfile.write(json.dumps(stats).encode('utf-8'))
             return
 
@@ -91,6 +182,7 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Fail2Ban Monitor</title>
                 <script src="https://cdn.tailwindcss.com"></script>
+                <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
                 <style>
                     :root { color-scheme: dark; }
                     ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -156,6 +248,38 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             <p id="failure-count" class="text-4xl font-black text-white mt-5 tabular-nums">0</p>
                             <p class="text-xs text-slate-500 mt-1">Falhas registradas no monitoramento</p>
                         </div>
+                    </section>
+
+                    <section class="glass rounded-2xl p-4 sm:p-5 mb-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div><p class="text-xs font-bold uppercase tracking-wider text-violet-300">Análise de segurança</p><p class="text-xs text-slate-500 mt-1">Ajuste o período e o alvo para explorar os eventos.</p></div>
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <label class="flex items-center gap-2 text-xs text-slate-400">Período
+                                    <select id="period-filter" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-400">
+                                        <option value="24">Últimas 24 horas</option><option value="48">Últimas 48 horas</option><option value="168">Últimos 7 dias</option>
+                                    </select>
+                                </label>
+                                <label class="flex items-center gap-2 text-xs text-slate-400">Jail
+                                    <select id="jail-filter" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-400"><option value="all">Todas as jails</option></select>
+                                </label>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 mb-6">
+                        <div class="metric-card glass rounded-2xl p-5" style="--metric-glow:#fb7185"><div class="flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-rose-300">Bans recentes</span><span class="text-lg">🚫</span></div><p id="recent-bans" class="text-3xl font-black text-white mt-4 tabular-nums">0</p><p class="text-xs text-slate-500 mt-1">No período selecionado</p></div>
+                        <div class="metric-card glass rounded-2xl p-5" style="--metric-glow:#a78bfa"><div class="flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-violet-300">Jails ativas</span><span class="text-lg">🔒</span></div><p id="active-jails" class="text-3xl font-black text-white mt-4 tabular-nums">0</p><p class="text-xs text-slate-500 mt-1">Proteções monitoradas</p></div>
+                        <div class="metric-card glass rounded-2xl p-5" style="--metric-glow:#38bdf8"><div class="flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-sky-300">Taxa de ataques</span><span class="text-lg">📈</span></div><p id="attack-rate" class="text-3xl font-black text-white mt-4 tabular-nums">0<span class="text-base font-semibold text-slate-400">/h</span></p><p class="text-xs text-slate-500 mt-1">Média de falhas por hora</p></div>
+                    </section>
+
+                    <section class="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-5 mb-6">
+                        <div class="glass rounded-2xl p-4 sm:p-5 lg:col-span-3"><div class="flex items-center justify-between mb-4"><div><h3 class="text-sm font-bold text-white">Bans por hora</h3><p class="text-xs text-slate-500 mt-1">Volume de tentativas detectadas</p></div><span class="text-xs text-sky-300">⏱</span></div><div class="h-56"><canvas id="hourly-chart"></canvas><p id="hourly-empty" class="hidden text-center text-xs text-slate-500 pt-20">Sem eventos no período.</p></div></div>
+                        <div class="glass rounded-2xl p-4 sm:p-5 lg:col-span-2"><div class="flex items-center justify-between mb-4"><div><h3 class="text-sm font-bold text-white">Distribuição por jail</h3><p class="text-xs text-slate-500 mt-1">Origem das falhas</p></div><span class="text-xs text-fuchsia-300">◉</span></div><div class="h-56 flex items-center justify-center"><canvas id="jail-chart"></canvas><p id="jail-empty" class="hidden text-center text-xs text-slate-500">Sem dados de jail.</p></div></div>
+                    </section>
+
+                    <section class="glass rounded-2xl p-4 sm:p-5 mb-10">
+                        <div class="flex items-center justify-between mb-4"><div><h3 class="text-sm font-bold text-white">IPs mais ofensores</h3><p class="text-xs text-slate-500 mt-1">Endereços com maior número de falhas</p></div><span class="text-xs text-rose-300">TOP 10</span></div>
+                        <div class="overflow-x-auto"><table class="w-full text-left"><thead><tr class="border-b border-slate-800 text-[10px] uppercase tracking-[.18em] text-slate-500"><th class="py-3 px-3">Endereço IP</th><th class="py-3 px-3">Jails</th><th class="py-3 px-3 text-right">Falhas</th></tr></thead><tbody id="top-ips-body" class="divide-y divide-slate-800/60"><tr><td colspan="3" class="py-8 text-center text-xs text-slate-500">Aguardando dados...</td></tr></tbody></table></div>
                     </section>
 
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
@@ -235,6 +359,8 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                     let countdownInterval;
                     let allBannedIps = [];
                     let allUnbannedIps = [];
+                    let hourlyChart;
+                    let jailChart;
 
                     function filterIPs() {
                         const searchInput = document.getElementById('search-ip');
@@ -358,6 +484,58 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                         }
                     }
 
+                    function updateServiceHealth(health) {
+                        const healthy = health && health.state === 'healthy';
+                        const statusText = document.getElementById('status-text');
+                        const statusDot = document.getElementById('status-dot');
+                        const statusPing = document.getElementById('status-ping');
+                        statusText.innerText = healthy ? 'Fail2Ban saudável' : 'Fail2Ban indisponível';
+                        statusText.className = healthy ? 'text-xs font-semibold text-emerald-300' : 'text-xs font-semibold text-amber-300';
+                        statusDot.className = healthy ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400' : 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400';
+                        statusPing.className = healthy ? 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75' : 'absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-50';
+                    }
+
+                    function updateCharts(charts) {
+                        if (typeof Chart === 'undefined') return;
+                        const chartColors = ['#a78bfa', '#f472b6', '#38bdf8', '#34d399', '#fbbf24', '#fb7185'];
+                        const hourlyCanvas = document.getElementById('hourly-chart');
+                        const jailCanvas = document.getElementById('jail-chart');
+                        const hourlyEmpty = document.getElementById('hourly-empty');
+                        const jailEmpty = document.getElementById('jail-empty');
+                        const hasHourly = charts.hourly.values.some(value => value > 0);
+                        const hasJails = charts.jails.values.length > 0;
+                        hourlyCanvas.classList.toggle('hidden', !hasHourly);
+                        hourlyEmpty.classList.toggle('hidden', hasHourly);
+                        jailCanvas.classList.toggle('hidden', !hasJails);
+                        jailEmpty.classList.toggle('hidden', hasJails);
+
+                        if (hourlyChart) hourlyChart.destroy();
+                        if (jailChart) jailChart.destroy();
+                        if (hasHourly) {
+                            hourlyChart = new Chart(hourlyCanvas, { type: 'line', data: { labels: charts.hourly.labels, datasets: [{ data: charts.hourly.values, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,.14)', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#7dd3fc', fill: true, tension: .35 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 10 } }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: '#64748b', precision: 0, font: { size: 10 } }, grid: { color: 'rgba(100,116,139,.12)' } } } } });
+                        }
+                        if (hasJails) {
+                            jailChart = new Chart(jailCanvas, { type: 'doughnut', data: { labels: charts.jails.labels, datasets: [{ data: charts.jails.values, backgroundColor: chartColors, borderColor: '#0f172a', borderWidth: 3 }] }, options: { maintainAspectRatio: false, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 10, padding: 14, font: { size: 10 } } } } } });
+                        }
+                    }
+
+                    function updateTopIps(topIps) {
+                        const tbody = document.getElementById('top-ips-body');
+                        if (!topIps.length) {
+                            tbody.innerHTML = '<tr><td colspan="3" class="py-10 text-center text-xs text-slate-500">Nenhum ofensor encontrado no período.</td></tr>';
+                            return;
+                        }
+                        tbody.innerHTML = topIps.map((item, index) => `<tr class="hover:bg-rose-500/[.04] transition-colors"><td class="py-3 px-3 font-mono text-sm text-slate-200"><span class="inline-flex w-6 text-xs text-slate-500">#${index + 1}</span>${item.ip}</td><td class="py-3 px-3 text-xs text-slate-400">${item.jails.length ? item.jails.join(', ') : 'Geral'}</td><td class="py-3 px-3 text-right"><span class="inline-flex min-w-10 justify-center px-2 py-1 rounded-lg bg-rose-500/10 text-rose-300 font-bold text-xs">${item.count}</span></td></tr>`).join('');
+                    }
+
+                    function updateJailFilter(jails) {
+                        const select = document.getElementById('jail-filter');
+                        const selected = select.value;
+                        const names = jails.map(jail => jail.name);
+                        select.innerHTML = '<option value="all">Todas as jails</option>' + names.map(name => `<option value="${name}">${name}</option>`).join('');
+                        select.value = names.includes(selected) ? selected : 'all';
+                    }
+
                     function forceRefresh() {
                         const svg = document.getElementById('svg-refresh');
                         svg.classList.remove('spin-once');
@@ -406,13 +584,22 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
                             const searchUnbannedInput = document.getElementById('search-unbanned-ip');
                             const savedUnbannedSearch = searchUnbannedInput.value;
 
-                            const response = await fetch('/api/stats');
+                            const period = document.getElementById('period-filter').value;
+                            const jail = document.getElementById('jail-filter').value;
+                            const response = await fetch(`/api/stats?period=${encodeURIComponent(period)}&jail=${encodeURIComponent(jail)}`);
                             const data = await response.json();
                             setConnectionStatus(true);
+                            updateServiceHealth(data.health);
 
                             document.getElementById('total-count').innerText = data.banned.length;
                             document.getElementById('unbanned-count').innerText = data.unbanned.length;
                             document.getElementById('failure-count').innerText = data.failures.length;
+                            document.getElementById('recent-bans').innerText = data.metrics.recent_bans;
+                            document.getElementById('active-jails').innerText = data.metrics.active_jails;
+                            document.getElementById('attack-rate').innerHTML = `${data.metrics.attack_rate}<span class="text-base font-semibold text-slate-400">/h</span>`;
+                            updateJailFilter(data.jails || []);
+                            updateCharts(data.charts);
+                            updateTopIps(data.top_ips || []);
 
                             allBannedIps = data.banned;
                             allUnbannedIps = data.unbanned;
@@ -464,6 +651,8 @@ class Fail2BanHandler(SimpleHTTPRequestHandler):
 
                     document.getElementById('search-ip').addEventListener('input', filterIPs);
                     document.getElementById('search-unbanned-ip').addEventListener('input', filterUnbannedIPs);
+                    document.getElementById('period-filter').addEventListener('change', forceRefresh);
+                    document.getElementById('jail-filter').addEventListener('change', forceRefresh);
                 </script>
             </body>
             </html>
